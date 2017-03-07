@@ -1,5 +1,6 @@
-var LINE_BOT_CHANNEL_ACCESS_TOKEN = PropertiesService.getScriptProperties().getProperty('LINE_BOT_CHANNEL_ACCESS_TOKEN'); // [ÉvÉçÉWÉFÉNÉgÇÃÉvÉçÉpÉeÉB] > [ÉXÉNÉäÉvÉgÇÃÉvÉçÉpÉeÉB] Ç≈ê›íËÇ∑ÇÈ
-var YAHOO_APP_ID = PropertiesService.getScriptProperties().getProperty('YAHOO_APP_ID'); // [ÉvÉçÉWÉFÉNÉgÇÃÉvÉçÉpÉeÉB] > [ÉXÉNÉäÉvÉgÇÃÉvÉçÉpÉeÉB] Ç≈ê›íËÇ∑ÇÈ
+var YAHOO_APP_ID = PropertiesService.getScriptProperties().getProperty('YAHOO_APP_ID'); // [„Éó„É≠„Ç∏„Çß„ÇØ„Éà„ÅÆ„Éó„É≠„Éë„ÉÜ„Ç£] > [„Çπ„ÇØ„É™„Éó„Éà„ÅÆ„Éó„É≠„Éë„ÉÜ„Ç£] „ÅßË®≠ÂÆö„Åô„Çã
+var LINE_BOT_CHANNEL_ACCESS_TOKEN = PropertiesService.getScriptProperties().getProperty('LINE_BOT_CHANNEL_ACCESS_TOKEN'); // [„Éó„É≠„Ç∏„Çß„ÇØ„Éà„ÅÆ„Éó„É≠„Éë„ÉÜ„Ç£] > [„Çπ„ÇØ„É™„Éó„Éà„ÅÆ„Éó„É≠„Éë„ÉÜ„Ç£] „ÅßË®≠ÂÆö„Åô„Çã
+var GOOGLE_FUSION_TABLES_DOC_ID = PropertiesService.getScriptProperties().getProperty('GOOGLE_FUSION_TABLES_DOC_ID'); // [„Éó„É≠„Ç∏„Çß„ÇØ„Éà„ÅÆ„Éó„É≠„Éë„ÉÜ„Ç£] > [„Çπ„ÇØ„É™„Éó„Éà„ÅÆ„Éó„É≠„Éë„ÉÜ„Ç£] „ÅßË®≠ÂÆö„Åô„Çã
 
 var LINE_REPLY_URL = 'https://api.line.me/v2/bot/message/reply';
 var YAHOO_SEARCH_URL = 'https://map.yahooapis.jp/search/local/V1/localSearch';
@@ -26,12 +27,48 @@ function getGoogleMapRouteUrl(srcLatitude, srcLongitude, destLatitude, destLongi
          + '&dirflg=w';
 }
 
+function changeVisited(uid, userId, visited) {
+  var sql = "SELECT ROWID FROM " + GOOGLE_FUSION_TABLES_DOC_ID
+          + " WHERE uid = '" + uid + "' and userId = '" + userId + "'";
+  var result = FusionTables.Query.sqlGet(sql);
+  if (typeof result.rows === 'undefined') {
+    sql = "INSERT INTO " + GOOGLE_FUSION_TABLES_DOC_ID
+        + " (uid, userId, visited)"
+        + " VALUES ('" + uid + "', '" + userId + "', " + visited + ")";
+    FusionTables.Query.sql(sql); 
+  } else {
+    var rowid = result.rows[0];
+    sql = "UPDATE " + GOOGLE_FUSION_TABLES_DOC_ID
+        + " SET visited = " + visited
+        + " WHERE ROWID = '" + rowid + "'";
+    FusionTables.Query.sql(sql);
+  }
+}
+
+function isVisited(uid, userId) {
+  var sql = "SELECT visited FROM " + GOOGLE_FUSION_TABLES_DOC_ID
+          + " WHERE uid = '" + uid + "' and userId = '" + userId + "'";
+  var result = FusionTables.Query.sqlGet(sql);
+  if (typeof result.rows === 'undefined') {
+    return false;
+  }
+  return (result.rows[0] == 1);
+}
+
+var Shrine = function(uid, name, address, distance, googleSearchUrl, googleMapRouteUrl) {
+  this.uid = uid;
+  this.name = name;
+  this.address = address;
+  this.distance = distance;
+  this.googleSearchUrl = googleSearchUrl;
+  this.googleMapRouteUrl = googleMapRouteUrl;
+};
 function getNearShrines(latitude, lonitude) {
   var url = YAHOO_SEARCH_URL
           + '?appid=' + YAHOO_APP_ID
-          + '&dist=3'     // 3 km à»ì‡
-          + '&gc=0424002' // ã∆éÌÉRÅ[Éh: ê_é–
-          + '&results=5'  // ç≈ëÂ 5 åè
+          + '&dist=3'     // 3 km ‰ª•ÂÜÖ
+          + '&gc=0424002' // Ê•≠Á®Æ„Ç≥„Éº„Éâ: Á•ûÁ§æ
+          + '&results=5'  // ÊúÄÂ§ß 5 ‰ª∂
           + '&lat=' + latitude
           + '&lon=' + lonitude
           + '&output=json&sort=dist';
@@ -40,14 +77,16 @@ function getNearShrines(latitude, lonitude) {
   var shrines = [];
   var features = JSON.parse(response.getContentText('UTF-8'))['Feature'];
   for (i = 0; i < features.length; i++) {
+    var uid = features[i]['Property'].Uid;
     var name = features[i].Name;
     var address = features[i]['Property'].Address;
-    var coordArray = features[i]['Geometry'].Coordinates.split(',');
-    var shrine_lonitude = coordArray[0];
-    var shrine_latitude = coordArray[1];
-    shrines.push('(' + (i+1) + ') ' + name + ' Å\ ' + getDistanceInKilloMeters(shrine_latitude, shrine_lonitude, latitude, lonitude) + ' km (' + address + ')\n\n'
-                    + 'åüçı: ' + getGoogleSearchUrl(name + ' ' + address) + '\n\n'
-                    + 'ÉãÅ[Ég: ' + getGoogleMapRouteUrl(shrine_latitude, shrine_lonitude, latitude, lonitude));
+    var coords = features[i]['Geometry'].Coordinates.split(',');
+    var shrine_lonitude = coords[0];
+    var shrine_latitude = coords[1];
+    var distance = getDistanceInKilloMeters(shrine_latitude, shrine_lonitude, latitude, lonitude);
+    var googleSearchUrl = getGoogleSearchUrl(name + ' ' + address);
+    var googleMapRouteUrl = getGoogleMapRouteUrl(shrine_latitude, shrine_lonitude, latitude, lonitude);
+    shrines.push(new Shrine(uid, name, address, distance, googleSearchUrl, googleMapRouteUrl));
   }
   return shrines;
 }
@@ -55,27 +94,89 @@ function getNearShrines(latitude, lonitude) {
 function doPost(e) {
   var json = JSON.parse(e.postData.contents);  
 
+  var userId = json.events[0].source.userId;
+
   var replyToken= json.events[0].replyToken;
   if (typeof replyToken === 'undefined') {
     return;
   }
+  
+  var helpMessage = '„Åì„Çì„Å´„Å°„ÅØ„ÄÇËøë„Åè„ÅÆÁ•ûÁ§æ„Çí„ÅäÁü•„Çâ„Åõ„Åô„ÇãLINE„Éú„ÉÉ„Éà„Åß„Åô„ÄÇ\n\n'
+                  + '‰ΩçÁΩÆÊÉÖÂ†±„ÇíÈÄÅ‰ø°„Åô„Çã„Å®„ÄÅ3 km ‰ª•ÂÜÖ„ÅÆÁ•ûÁ§æ„Çí„ÄÅÊúÄÂ§ß 5 „Å§Êé¢„Åó„Å¶Ê¨°„ÅÆÊÉÖÂ†±„Çí„Åä‰ºù„Åà„Åó„Åæ„Åô„ÄÇ\n\n'
+                  + '„ÉªÁ•ûÁ§æ„ÅÆÂêçÂâç\n'
+                  + '„ÉªÁõ¥Á∑öË∑ùÈõ¢\n'
+                  + '„Éª‰ΩèÊâÄ\n'
+                  + '„ÉªÊ§úÁ¥¢„É™„É≥„ÇØ\n'
+                  + '„Éª„É´„Éº„ÉàÊ°àÂÜÖ„É™„É≥„ÇØ\n\n'
+                  + '‚Äª‰ΩçÁΩÆÊÉÖÂ†±„ÅØ„ÄÅ„Éà„Éº„ÇØ„É´„Éº„É†‰∏ãÈÉ®„ÅÆ„ÄåÔºã„Äç‚Üí„Äå‰ΩçÁΩÆÊÉÖÂ†±„Äç„Åã„ÇâÈÄÅ‰ø°„Åß„Åç„Åæ„Åô„ÄÇ';
+  var messages = [{'type': 'text', 'text': helpMessage}]; 
 
-  var replyMessages = ['Ç±ÇÒÇ…ÇøÇÕÅBãﬂÇ≠ÇÃê_é–ÇÇ®ímÇÁÇπÇ∑ÇÈLINEÉ{ÉbÉgÇ≈Ç∑ÅB\n\n'
-                        + 'à íuèÓïÒÇëóêMÇ∑ÇÈÇ∆ÅA3 km à»ì‡ÇÃê_é–ÇÅAç≈ëÂ 5 Ç¬íTÇµÇƒéüÇÃèÓïÒÇÇ®ì`Ç¶ÇµÇ‹Ç∑ÅB\n\n'
-                        + 'ÅEê_é–ÇÃñºëO\n'
-                        + 'ÅEíºê¸ãóó£\n'
-                        + 'ÅEèZèä\n'
-                        + 'ÅEåüçı URL\n'
-                        + 'ÅEÉãÅ[Égàƒì‡ URL\n\n'
-                        + 'Å¶à íuèÓïÒÇÕÅAÉgÅ[ÉNÉãÅ[ÉÄâ∫ïîÇÃÅuÅ{ÅvÅ®Åuà íuèÓïÒÅvÇ©ÇÁëóêMÇ≈Ç´Ç‹Ç∑ÅB'];
-  var userMessage = json.events[0].message;  
-  if ('location' == userMessage.type) {
-    replyMessages = getNearShrines(userMessage.latitude, userMessage.longitude);
+  if ('message' == json.events[0].type) {
+  
+    var userMessage = json.events[0].message;
+    if ('location' == json.events[0].message.type) {
+      var replyMessage = getNearShrines(userMessage.latitude, userMessage.longitude);
+      var columns = replyMessage.map(function (v) {
+        var title = v.name;
+        var postbackLabel = 'Ë°å„Å£„Åü„Åì„Å®„Åå„ÅÇ„Çã';
+        var postbackData = 'action=visited&uid=' + v.uid;
+        if (isVisited(v.uid, userId)) {
+          title += ' (‚òÖÂèÇÊãùÊ∏à„Åø)'
+          postbackLabel = 'ÂèÇÊãùÊ∏à„Åø „ÇíÂèñ„ÇäÊ∂à„Åô';
+          postbackData = 'action=unvisited&uid=' + v.uid;
+        }
+        return {
+          'title': title,
+          'text': '„Åì„Åì„Åã„Çâ ' + v.distance + 'km ‚Äï ' + v.address,
+          'actions': [
+            {
+              'type': 'postback',
+              'label': postbackLabel,
+              'data': postbackData
+            },
+            {
+              'type': 'uri',
+              'label': '„Åì„ÅÆÁ•ûÁ§æ„ÇíÊ§úÁ¥¢',
+              'uri': v.googleSearchUrl
+            },
+            {
+              'type': 'uri',
+              'label': '„Åì„Åì„Åã„Çâ„ÅÆ„É´„Éº„Éà',
+              'uri': v.googleMapRouteUrl
+            }
+          ]
+        };
+    });
+    var altText = '';
+    replyMessage.forEach(function(element, index, array) {
+      altText += element.name + ' | ';
+    });
+    messages = [
+      {
+        'type': 'template',
+        'altText': altText,
+        'template': {
+          'type': 'carousel',
+          'columns': columns
+        }
+      }
+    ];
+
+  }
+  
+  } else if ('postback' == json.events[0].type) {
+    var data = json.events[0].postback.data;
+    var dataArray = data.split('&');
+    var action = dataArray[0].split('=')[1];
+    var uid = dataArray[1].split('=')[1];
+    if ('visited' == action) {
+      changeVisited(uid, userId, 1);
+    } else if ('unvisited' == action) {
+      changeVisited(uid, userId, 0);
+    }
+    messages = [{'type': 'text', 'text': 'Ë°å„Å£„Åü„Åì„Å®„Åå„ÅÇ„ÇãÁ•ûÁ§æ„ÇíÊõ¥Êñ∞„Åó„Åæ„Åó„Åü'}]; 
   }
 
-  var messages = replyMessages.map(function (v) {
-    return {'type': 'text', 'text': v};    
-  });    
   UrlFetchApp.fetch(LINE_REPLY_URL, {
     'headers': {
       'Content-Type': 'application/json; charset=UTF-8',
